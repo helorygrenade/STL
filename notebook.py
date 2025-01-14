@@ -72,6 +72,12 @@ def __(mo):
 
 
 @app.cell
+def __(show):
+    show("data/cube.stl", theta=45.0, phi=30.0, scale=0.5)
+    return
+
+
+@app.cell
 def __(mo):
     mo.md(r"""## STL & NumPy""")
     return
@@ -147,6 +153,69 @@ def __(mo):
 
 
 @app.cell
+def __(np):
+    square_triangles = np.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+        ],
+        dtype=np.float32,
+    )
+    return (square_triangles,)
+
+
+@app.cell
+def __(np):
+    def vect_prod(v1, v2):
+        prod = np.zeros(3)
+        prod[0] = v1[1]*v2[2] - v1[2]*v2[1]
+        prod[1] = v1[2]*v2[0] - v1[0]*v2[2]
+        prod[2] = v1[0]*v2[1] - v1[1]*v2[0]
+        return prod
+    return (vect_prod,)
+
+
+@app.cell
+def __(np):
+    def make_normals(triangles):
+        (n, m, p) = triangles.shape
+        normals = np.zeros((n, 3), dtype= np.float32)
+        for i in range(n):
+            normals[i, 0] = np.cross(triangles[i, 1] - triangles[i, 0],triangles[i, 2] - triangles[i, 0])[0]
+            normals[i, 1] = np.cross(triangles[i, 1] - triangles[i, 0],triangles[i, 2] - triangles[i, 0])[1]
+            normals[i, 2] = np.cross(triangles[i, 1] - triangles[i, 0],triangles[i, 2] - triangles[i, 0])[2]
+        return normals
+    return (make_normals,)
+
+
+@app.cell
+def __():
+    def make_facets(triangle, normal):
+        facet = f'\tfacet normal {normal[0]} {normal[1]} {normal[2]}\n'
+        facet += '\t\touter loop\n'
+        for j in range(3):
+            facet += f'\t\tvertex {triangle[j, 0]} {triangle[j, 1]} {triangle[j, 2]}\n'
+        facet += '\t\tendloop\n'
+        facet += '\tendfacet\n'
+        return facet
+    return (make_facets,)
+
+
+@app.cell
+def __(make_facets, make_normals):
+    def make_stl(triangles, normals = None, name = ''):
+        n, m, p = triangles.shape 
+        stl_ascii = f'solid {name}\n'
+        if normals is None:
+            normals = make_normals(triangles)
+        for i in range(n):
+            stl_ascii += make_facets(triangles[i], normals[i])
+        stl_ascii += f'endsolid {name}'
+        return stl_ascii
+    return (make_stl,)
+
+
+@app.cell
 def __(mo):
     mo.md(
         """
@@ -190,6 +259,19 @@ def __(mo):
         """
     )
     return
+
+
+@app.cell
+def __(np, stl):
+    def tokenize(object):
+        stl = stl.replace('\t', '').replace('\n', ' ')
+        stl = stl.split()
+        indices = [i for i, value in enumerate(stl) if (value == 'normal') or (value == 'vertex')]
+        for i in indices:
+            for k in range(3):
+                stl[i + k + 1] = np.float32(stl[i + k + 1])
+        return stl
+    return (tokenize,)
 
 
 @app.cell
@@ -256,6 +338,26 @@ def __(mo):
 
 
 @app.cell
+def __(np):
+    def parse(tokens):
+        name = ''
+        if tokens[1] == tokens[-1]:
+            name = tokens[-1]
+        ind_norm = [i for i, value in enumerate(tokens) if value == 'normal']
+        ind_vertex = [i for i, value in enumerate(tokens) if value == 'vertex']
+
+        n = tokens.count('facet')
+        triangles = np.zeros((n,3,3), dtype=np.float32)
+        normals = np.zeros((n,3), dtype = np.float32)
+        for i in ind_norm:
+            normals[ind_norm.index(i)] = np.array(tokens[i+1:i+4])
+        for i in ind_vertex[::3]:
+            triangles[ind_vertex[::3].index(i)] = np.array([tokens[i+1:i+4], tokens[i+5:i+8], tokens[i+9:i+12]])
+        return triangles, normals, name
+    return (parse,)
+
+
+@app.cell
 def __(mo):
     mo.md(
         rf"""
@@ -287,6 +389,96 @@ def __(mo):
     """
     )
     return
+
+
+@app.cell
+def __():
+    def check_positive_octant(triangles, n):
+        count = 0
+        for i in range(n):
+            for j in range(3):
+                for k in range(3):
+                    if triangles[i, j, k]<0:
+                        count += 1
+        return (count/(3*n))*100
+    return (check_positive_octant,)
+
+
+@app.cell
+def __(np):
+    def check_orientation(triangles, normals, n):
+        count = 0
+        for i in range(n):
+            if abs(np.norm(normals([i])) - 1) > 0.1:
+                count += 1
+                continue
+            if np.dot(np.cross(triangles[i,1] - triangles[i,0], triangles[i,2] - triangles[i,0]), normals[i]) != np.norm(np.cross(triangles[i,1] - triangles[i,0], triangles[i,2] - triangles[i,0]))*np.norm(normals[i]):
+                count += 1
+        return 100*count/n
+    return (check_orientation,)
+
+
+@app.cell
+def __():
+    def triangle_to_edges(triangle):
+    	v0, v1, v2 = map(tuple, triangle)
+    	return [tuple(v0, v1), tuple(v1, v2),tuple(v2, v0)]
+    return (triangle_to_edges,)
+
+
+@app.cell
+def __(shared_twice, triangle_edges, triangle_to_edges):
+    def check_shared_edge(triangles,n):
+        edge_count = {}
+        for i in range(n):
+            triangled_edges = triangle_to_edges(triangles[i])
+            for edge in triangle_edges:
+                if edge in edge_count:
+                    edge_count[edge] +=1
+        shared_txice = sum(1 for count in edge_count.values() if count == 2)
+        total_edges = len(edge_count)
+        return (shared_twice/total_edges)*100
+    return (check_shared_edge,)
+
+
+@app.cell
+def __():
+    def barycenter_z(triangle):
+        v0, v1, v2 = triangle
+        return (1/3)*(v0[2]+v1[2]+v2[2])
+    return (barycenter_z,)
+
+
+@app.cell
+def __(barycenter_z):
+    def check_barycenter_ascending(triangles,n):
+        count=0
+        for i in range(n):
+            if barycenter_z(triangles[i])>barycenter_z(triangles[i+1]):
+                count += 1
+        return 100*count/n
+    return (check_barycenter_ascending,)
+
+
+@app.cell
+def __(
+    check_barycenter_ascending,
+    check_orientation,
+    check_positive_octant,
+    check_shared_edge,
+    parse,
+    tirangles,
+    tokenize,
+):
+    def diagnostic(stl):
+        triangles, normals, name = parse(tokenize(stl))
+        n=triangles.shape[0]
+        positive_percentage = check_positive_octant(triangles, n)
+        orientation_percentage = check_orientation(triangles,normals,n)
+        shared_edge_percentage = check_shared_edge(tirangles,n)
+        ascending_rule_percentage = check_barycenter_ascending(triangles,n)
+        print(f'here are the percentage of validity for the following rules for the {name} stl file:\n positive octant rule % = {positive_percentage}\n orientation rule % = {orientation_percentage}\n shared edges rule % = {shared_edge_percentage}\n ascending rule % = {ascending_rule_percentage}')
+    return (diagnostic,)
 
 
 @app.cell
@@ -339,6 +531,27 @@ def __(mo):
 
 
 @app.cell
+def __(make_stl, np, triangle):
+    def OBJ_to_STL(obj):
+        list=obj.split('\n')
+        list = list[3:]
+        list = ' '.join(list)
+        list = list.split('f')
+        facets = list[1:]
+        vertices = list[0].split('v')
+        triangles=[]
+        for facet in facets:
+            facet=facet.split()
+            triangle = [vertices[int(triangle[0])], vertices[int(triangle[1])], vertices[int(triangle[2])]]
+            triangle_final = []
+            for vertex in triangle:
+            	triangle_final.append(vertex.split())
+            triangles.append(triangle_final)
+        return make_stl(np.array(triangles, dtype=np.float32))
+    return (OBJ_to_STL,)
+
+
+@app.cell
 def __(mo):
     mo.md(
         rf"""
@@ -381,7 +594,7 @@ def __(make_STL, np):
                 faces.append(np.fromfile(file, dtype=np.float32, count=9).reshape(3, 3))
                 _ = file.read(2)
         stl_text = make_STL(faces, normals)
-        with open(stl_filename_out, mode="wt", encoding="utf-8") as file:
+        with open(stl_filename_out, mode="w", encoding="utf-8") as file:
             file.write(stl_text)
     return (STL_binary_to_text,)
 
@@ -424,7 +637,7 @@ def __(
     union,
 ):
     demo_csg_alt = difference(
-        intersection(
+            intersection(
             sphere(1),
             box(1.5),
         ),
